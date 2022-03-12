@@ -1,0 +1,12 @@
+[submodule "android/contrib/deterministic-build/electrum-locale"]
+	path = android/contrib/deterministic-build/electrum-locale
+	url = https://github.com/spesmilo/electrum-locale
+[submodule "android/contrib/CalinsQRReader"]
+	path = android/contrib/osx/CalinsQRReader
+	url = https://github.com/spesmilo/CalinsQRReader
+[submodule "android/electrum/www"]
+	path = android/electrum/www
+	url = https://github.com/spesmilo/electrum-http.git
+[submodule "android/electrum/gui/kivy/theming/atlas"]
+	path = android/electrum/gui/kivy/theming/atlas
+	url = https://github.com/spesmilo/electrum-kivy-atlas
