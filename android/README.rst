@@ -77,8 +77,8 @@ Development version (git clone)
 
 Check out the code from GitHub::
 
-    git clone git://github.com/AKKPP/ChessCoin032-Electrum-Clients.git
-    cd Chesscoin-electrum
+    git clone git://github.com/AKKPP/ChessCoin032-Smartphone-Wallet-for-Android-and-iOS-.git
+    cd ChessCoin032-Smartphone-Wallet-for-Android-and-iOS-
     git submodule update --init
 
 Run install (this should install dependencies)::
