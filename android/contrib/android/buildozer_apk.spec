@@ -10,7 +10,7 @@ package.name = Chesscoin
 package.domain = org.electrum
 
 # (str) Source code where the main.py live
-source.dir = /home/user/projcwd
+source.dir = .
 
 # (list) Source files to include (let empty to include all the files)
 source.include_exts = py,png,jpg,kv,atlas,ttf,txt,gif,pem,mo,vs,fs,json,csv
@@ -31,11 +31,11 @@ source.exclude_patterns = Makefile,setup*,
     packages/aiohttp-*.dist-info/*
 
 # (str) Application versioning (method 1)
-#version.regex = APK_VERSION = '(.*)'
-#version.filename = %(source.dir)s/electrum/version.py
+version.regex = APK_VERSION = '(.*)'
+version.filename = %(source.dir)s/electrum/version.py
 
 # (str) Application versioning (method 2)
-version = 1.0.1
+#version = 1.0.1
 
 # (list) Application requirements
 # note: versions and hashes are pinned in ./p4a_recipes/*
@@ -81,7 +81,7 @@ android.api = 31
 android.minapi = 21
 
 # (str) Android NDK version to use
-android.ndk = 19c
+android.ndk = 22b
 
 # (int) Android NDK API to use (optional). This is the minimum API your app will support.
 android.ndk_api = 21
@@ -90,19 +90,19 @@ android.ndk_api = 21
 android.private_storage = True
 
 # (str) Android NDK directory (if empty, it will be automatically downloaded.)
-#android.ndk_path = /opt/android/android-ndk
+android.ndk_path = /opt/android/android-ndk
 
 # (str) Android SDK directory (if empty, it will be automatically downloaded.)
-#android.sdk_path = /opt/android/android-sdk
+android.sdk_path = /opt/android/android-sdk
 
 # (str) ANT directory (if empty, it will be automatically downloaded.)
-#android.ant_path = /opt/android/apache-ant
+android.ant_path = /opt/android/apache-ant
 
 # (bool) If True, then skip trying to update the Android sdk
 # This can be useful to avoid excess Internet downloads or save time
 # when an update is due and you just want to test/build your package
 # note(ghost43): probably needed for reproducibility. versions pinned in Dockerfile.
-android.skip_update = False
+android.skip_update = True
 
 # (bool) If True, then automatically accept SDK license
 # agreements. This is intended for automation only. If set to False,
@@ -122,7 +122,7 @@ android.accept_sdk_license = True
 
 # (list) List of Java files to add to the android project (can be java or a
 # directory containing the files)
-android.add_src = %(source.dir)s/electrum/gui/kivy/data/java-classes/
+android.add_src = electrum/gui/kivy/data/java-classes/
 
 android.gradle_dependencies = me.dm7.barcodescanner:zxing:1.9.8
 
@@ -131,7 +131,6 @@ android.add_activities = org.electrum.qr.SimpleScannerActivity
 # (str) python-for-android branch to use, if not master, useful to try
 # not yet merged features.
 #android.branch = master
-p4a.branch = develop
 
 # (str) OUYA Console category. Should be one of GAME or APP
 # If you leave this blank, OUYA support will not be enabled
@@ -141,7 +140,7 @@ p4a.branch = develop
 #android.ouya.icon.filename = %(source.dir)s/data/ouya_icon.png
 
 # (str) XML file to include as an intent filters in <activity> tag
-android.manifest.intent_filters = %(source.dir)s/contrib/android/bitcoin_intent.xml
+android.manifest.intent_filters = contrib/android/bitcoin_intent.xml
 
 # (str) launchMode to set for the main activity
 android.manifest.launch_mode = singleTask
@@ -157,7 +156,6 @@ android.manifest.launch_mode = singleTask
 # note: can be overwritten by APP_ANDROID_ARCH env var
 #android.arch = armeabi-v7a
 android.archs = arm64-v8a, armeabi-v7a
-android.release_artifact = aab
 
 # (list) Android application meta-data to set (key=value format)
 #android.meta_data =
@@ -176,7 +174,7 @@ android.allow_backup = False
 #
 
 # (str) python-for-android git clone directory (if empty, it will be automatically cloned from github)
-#p4a.source_dir = /opt/python-for-android
+p4a.source_dir = /opt/python-for-android
 
 # (str) The directory in which python-for-android should look for your own build recipes (if any)
 p4a.local_recipes = %(source.dir)s/contrib/android/p4a_recipes/
@@ -207,7 +205,7 @@ p4a.local_recipes = %(source.dir)s/contrib/android/p4a_recipes/
 [buildozer]
 
 # (int) Log level (0 = error only, 1 = info, 2 = debug (with command output))
-log_level = 1
+log_level = 2
 
 # (str) Path to build output (i.e. .apk, .ipa) storage
 bin_dir = ./dist
