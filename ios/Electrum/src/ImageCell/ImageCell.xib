@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document type="com.apple.InterfaceBuilder3.CocoaTouch.XIB" version="3.0" toolsVersion="13771" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" useTraitCollections="YES" useSafeAreas="YES" colorMatched="YES">
+    <device id="retina4_7" orientation="portrait">
+        <adaptation id="fullscreen"/>
+    </device>
+    <dependencies>
+        <deployment identifier="iOS"/>
+        <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="13772"/>
+        <capability name="Aspect ratio constraints" minToolsVersion="5.1"/>
+        <capability name="Safe area layout guides" minToolsVersion="9.0"/>
+        <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
+    </dependencies>
+    <objects>
+        <placeholder placeholderIdentifier="IBFilesOwner" id="-1" userLabel="File's Owner"/>
+        <placeholder placeholderIdentifier="IBFirstResponder" id="-2" customClass="UIResponder"/>
+        <tableViewCell contentMode="scaleToFill" selectionStyle="default" indentationWidth="10" rowHeight="284" id="KGk-i7-Jjw" customClass="ImageCell">
+            <rect key="frame" x="0.0" y="0.0" width="320" height="284"/>
+            <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMaxY="YES"/>
+            <tableViewCellContentView key="contentView" opaque="NO" clipsSubviews="YES" multipleTouchEnabled="YES" contentMode="center" ambiguous="YES" tableViewCell="KGk-i7-Jjw" id="H2p-sc-9uM">
+                <rect key="frame" x="0.0" y="0.0" width="320" height="283.5"/>
+                <autoresizingMask key="autoresizingMask"/>
+                <subviews>
+                    <view contentMode="scaleToFill" ambiguous="YES" translatesAutoresizingMaskIntoConstraints="NO" id="Nzd-h7-JSW">
+                        <rect key="frame" x="40" y="8" width="240" height="267.5"/>
+                        <subviews>
+                            <imageView userInteractionEnabled="NO" contentMode="scaleToFill" horizontalHuggingPriority="251" verticalHuggingPriority="251" ambiguous="YES" translatesAutoresizingMaskIntoConstraints="NO" id="pzF-vG-FZL">
+                                <rect key="frame" x="-10" y="0.0" width="260" height="267.5"/>
+                                <color key="backgroundColor" white="1" alpha="1" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
+                            </imageView>
+                        </subviews>
+                        <color key="backgroundColor" white="1" alpha="1" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
+                        <constraints>
+                            <constraint firstItem="pzF-vG-FZL" firstAttribute="centerX" secondItem="Nzd-h7-JSW" secondAttribute="centerX" id="MzV-5p-67i"/>
+                            <constraint firstItem="pzF-vG-FZL" firstAttribute="centerY" secondItem="Nzd-h7-JSW" secondAttribute="centerY" id="RZK-mJ-MbG"/>
+                            <constraint firstAttribute="height" secondItem="Nzd-h7-JSW" secondAttribute="width" multiplier="1:1" id="eYj-ef-jQf"/>
+                            <constraint firstItem="pzF-vG-FZL" firstAttribute="height" secondItem="Nzd-h7-JSW" secondAttribute="height" constant="-60" id="n1b-Pr-g9A"/>
+                            <constraint firstItem="pzF-vG-FZL" firstAttribute="width" secondItem="Nzd-h7-JSW" secondAttribute="width" constant="-60" id="rjX-H3-ztZ"/>
+                        </constraints>
+                    </view>
+                </subviews>
+                <color key="backgroundColor" white="0.0" alpha="0.0" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
+                <constraints>
+                    <constraint firstAttribute="bottom" secondItem="Nzd-h7-JSW" secondAttribute="bottom" constant="8" id="6wI-cb-IDV"/>
+                    <constraint firstItem="Nzd-h7-JSW" firstAttribute="width" secondItem="H2p-sc-9uM" secondAttribute="width" constant="-60" id="8hU-tC-Xy7"/>
+                    <constraint firstItem="Nzd-h7-JSW" firstAttribute="top" secondItem="H2p-sc-9uM" secondAttribute="top" constant="8" id="Flb-1A-Bnc"/>
+                    <constraint firstItem="Nzd-h7-JSW" firstAttribute="centerX" secondItem="H2p-sc-9uM" secondAttribute="centerX" id="cFi-ec-Ut4"/>
+                </constraints>
+            </tableViewCellContentView>
+            <color key="backgroundColor" white="0.0" alpha="0.0" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
+            <viewLayoutGuide key="safeArea" id="aW0-zy-SZf"/>
+            <connections>
+                <outlet property="mainImageView" destination="pzF-vG-FZL" id="uJJ-oJ-TK6"/>
+            </connections>
+            <point key="canvasLocation" x="25" y="172"/>
+        </tableViewCell>
+    </objects>
+</document>

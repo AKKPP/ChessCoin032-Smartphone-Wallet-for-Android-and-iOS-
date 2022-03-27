@@ -1,0 +1,39 @@
+//
+//  Prefix header
+//
+//  The contents of this file are implicitly included at the beginning of every source file.
+//
+
+#ifdef __OBJC__
+    #import <UIKit/UIKit.h>
+    #import <Foundation/Foundation.h>
+    #import "EXTScope.h"
+    #import "UIView+TKGeometry.h"
+    #import "Functions.h"
+    #import "UIView+Utils.h"
+    #import "UIViewController+Electrum.h"
+    #import <Availability.h>
+    #import <CocoaLumberjack/CocoaLumberjack.h>
+    #import "Localizer.h"
+    #import "Logs.h"
+    #import "Analytics.h"
+
+    #if DEBUG
+    static const DDLogLevel ddLogLevel = DDLogLevelVerbose;
+    #else
+    static const DDLogLevel ddLogLevel = DDLogLevelWarning;
+    #endif
+
+    #define RGB(r,g,b) [UIColor colorWithRed:r/255.f green:g/255.f blue:b/255.f alpha:1.f]
+
+    #define L(a) [Localizer localize:a]
+    #define SL(a) [Localizer specialLocalize:a]
+
+    typedef NS_ENUM(NSInteger, Direction) {
+        DirectionBackToRight,
+        DirectionForwardToLeft
+    };
+
+    CF_INLINE bool IsEqualFloat(float a, float b) { return ABS(a - b) < pow(10, -10); }
+    CF_INLINE bool IsFloatEqual(float a, float b) { return IsEqualFloat(a,b);}
+#endif

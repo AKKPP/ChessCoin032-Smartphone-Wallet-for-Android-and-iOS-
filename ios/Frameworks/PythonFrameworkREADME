@@ -1,0 +1,4 @@
+You can download project for build libPython.a from:
+https://github.com/pybee/Python-Apple-support/archive/3.6-b6.zip
+- then perform 'make iOS' command in terminal for build needed library.
+
