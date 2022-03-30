@@ -35,9 +35,9 @@ def plot_history(history):
 
     f, axarr = plt.subplots(2, sharex=True)
     plt.subplots_adjust(bottom=0.2)
-    plt.xticks( rotation=25 )
+    plt.xticks(rotation=25)
     ax = plt.gca()
-    plt.ylabel('CHESS')
+    plt.ylabel('BTC')
     plt.xlabel('Month')
     xfmt = md.DateFormatter('%Y-%m-%d')
     ax.xaxis.set_major_formatter(xfmt)

@@ -23,10 +23,12 @@
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+from .mnemonic import Wordlist
+
 
 # list of words from http://en.wiktionary.org/wiki/Wiktionary:Frequency_lists/Contemporary_poetry
 
-words = [
+_words = (
 "like",
 "just",
 "love",
@@ -1652,17 +1654,19 @@ words = [
 "total",
 "unseen",
 "weapon",
-"weary"
-]
+"weary",
+)
 
+wordlist = Wordlist(_words)
 
+n = len(wordlist)
+assert n == 1626
 
-n = 1626
 
 # Note about US patent no 5892470: Here each word does not represent a given digit.
 # Instead, the digit represented by a word is variable, it depends on the previous word.
 
-def mn_encode( message ):
+def mn_encode(message):
     assert len(message) % 8 == 0
     out = []
     for i in range(len(message)//8):
@@ -1671,17 +1675,17 @@ def mn_encode( message ):
         w1 = (x%n)
         w2 = ((x//n) + w1)%n
         w3 = ((x//n//n) + w2)%n
-        out += [ words[w1], words[w2], words[w3] ]
+        out += [wordlist[w1], wordlist[w2], wordlist[w3]]
     return out
 
 
-def mn_decode( wlist ):
+def mn_decode(wlist):
     out = ''
     for i in range(len(wlist)//3):
         word1, word2, word3 = wlist[3*i:3*i+3]
-        w1 =  words.index(word1)
-        w2 = (words.index(word2))%n
-        w3 = (words.index(word3))%n
+        w1 =  wordlist.index(word1)
+        w2 = (wordlist.index(word2)) % n
+        w3 = (wordlist.index(word3)) % n
         x = w1 +n*((w2-w1)%n) +n*n*((w3-w2)%n)
         out += '%08x'%x
     return out

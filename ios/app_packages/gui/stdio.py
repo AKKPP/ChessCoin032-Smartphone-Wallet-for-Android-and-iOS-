@@ -1,18 +1,27 @@
 from decimal import Decimal
-_ = lambda x:x
-#from i18n import _
+import getpass
+import datetime
+import logging
+
+from electrum.gui import BaseElectrumGui
+from electrum import util
 from electrum import WalletStorage, Wallet
-from electrum.util import format_satoshis, set_verbosity
-from electrum.bitcoin import is_address, COIN, TYPE_ADDRESS
-import getpass, datetime
+from electrum.wallet_db import WalletDB
+from electrum.util import format_satoshis
+from electrum.bitcoin import is_address, COIN
+from electrum.transaction import PartialTxOutput
+from electrum.network import TxBroadcastError, BestEffortRequestFailed
+
+_ = lambda x:x  # i18n
 
 # minimal fdisk like gui for console usage
 # written by rofl0r, with some bits stolen from the text gui (ncurses)
 
-class ElectrumGui:
 
-    def __init__(self, config, daemon, plugins):
-        self.config = config
+class ElectrumGui(BaseElectrumGui):
+
+    def __init__(self, *, config, daemon, plugins):
+        BaseElectrumGui.__init__(self, config=config, daemon=daemon, plugins=plugins)
         self.network = daemon.network
         storage = WalletStorage(config.get_wallet_path())
         if not storage.file_exists:
@@ -22,21 +31,21 @@ class ElectrumGui:
             password = getpass.getpass('Password:', stream=None)
             storage.decrypt(password)
 
+        db = WalletDB(storage.read(), manual_upgrades=False)
+
         self.done = 0
         self.last_balance = ""
-
-        set_verbosity(False)
 
         self.str_recipient = ""
         self.str_description = ""
         self.str_amount = ""
         self.str_fee = ""
 
-        self.wallet = Wallet(storage)
-        self.wallet.start_threads(self.network)
+        self.wallet = Wallet(db, storage, config=config)
+        self.wallet.start_network(self.network)
         self.contacts = self.wallet.contacts
 
-        self.network.register_callback(self.on_network, ['updated', 'banner'])
+        util.register_callback(self.on_network, ['wallet_updated', 'network_updated', 'banner'])
         self.commands = [_("[h] - displays this help text"), \
                          _("[i] - display transaction history"), \
                          _("[o] - enter payment order"), \
@@ -45,11 +54,11 @@ class ElectrumGui:
                          _("[r] - show own receipt addresses"), \
                          _("[c] - display contacts"), \
                          _("[b] - print server banner"), \
-                         _("[q] - quit") ]
+                         _("[q] - quit")]
         self.num_commands = len(self.commands)
 
     def on_network(self, event, *args):
-        if event == 'updated':
+        if event in ['wallet_updated', 'network_updated']:
             self.updated()
         elif event == 'banner':
             self.print_banner()
@@ -87,9 +96,9 @@ class ElectrumGui:
         + "%d"%(width[2]+delta)+"s"+"%"+"%d"%(width[3]+delta)+"s"
         messages = []
 
-        for item in self.wallet.get_history():
-            tx_hash, height, conf, timestamp, delta, balance = item
-            if conf:
+        for hist_item in reversed(self.wallet.get_history()):
+            if hist_item.tx_mined_status.conf:
+                timestamp = hist_item.tx_mined_status.timestamp
                 try:
                     time_str = datetime.datetime.fromtimestamp(timestamp).isoformat(' ')[:-3]
                 except Exception:
@@ -97,10 +106,11 @@ class ElectrumGui:
             else:
                 time_str = 'unconfirmed'
 
-            label = self.wallet.get_label(tx_hash)
-            messages.append( format_str%( time_str, label, format_satoshis(delta, whitespaces=True), format_satoshis(balance, whitespaces=True) ) )
+            label = self.wallet.get_label_for_txid(hist_item.txid)
+            messages.append(format_str % (time_str, label, format_satoshis(delta, whitespaces=True),
+                                          format_satoshis(hist_item.balance, whitespaces=True)))
 
-        self.print_list(messages[::-1], format_str%( _("Date"), _("Description"), _("Amount"), _("Balance")))
+        self.print_list(messages[::-1], format_str%(_("Date"), _("Description"), _("Amount"), _("Balance")))
 
 
     def print_balance(self):
@@ -109,7 +119,7 @@ class ElectrumGui:
     def get_balance(self):
         if self.wallet.network.is_connected():
             if not self.wallet.up_to_date:
-                msg = _( "Synchronizing..." )
+                msg = _("Synchronizing...")
             else:
                 c, u, x =  self.wallet.get_balance()
                 msg = _("Balance")+": %f  "%(Decimal(c) / COIN)
@@ -118,7 +128,7 @@ class ElectrumGui:
                 if x:
                     msg += "  [%f unmatured]"%(Decimal(x) / COIN)
         else:
-                msg = _( "Not connected" )
+                msg = _("Not connected")
 
         return(msg)
 
@@ -128,7 +138,7 @@ class ElectrumGui:
         self.print_list(messages, "%19s  %25s "%("Key", "Value"))
 
     def print_addresses(self):
-        messages = map(lambda addr: "%30s    %30s       "%(addr, self.wallet.labels.get(addr,"")), self.wallet.get_addresses())
+        messages = map(lambda addr: "%30s    %30s       "%(addr, self.wallet.get_label(addr)), self.wallet.get_addresses())
         self.print_list(messages, "%19s  %25s "%("Address", "Label"))
 
     def print_order(self):
@@ -145,8 +155,8 @@ class ElectrumGui:
         self.do_send()
 
     def print_banner(self):
-        for i, x in enumerate( self.wallet.network.banner.split('\n') ):
-            print( x )
+        for i, x in enumerate(self.wallet.network.banner.split('\n')):
+            print(x)
 
     def print_list(self, lst, firstline):
         lst = list(lst)
@@ -163,7 +173,7 @@ class ElectrumGui:
 
     def do_send(self):
         if not is_address(self.str_recipient):
-            print(_('Invalid Bitcoin address'))
+            print(_('Invalid chesscoin address'))
             return
         try:
             amount = int(Decimal(self.str_amount) * COIN)
@@ -189,23 +199,29 @@ class ElectrumGui:
             if c == "n": return
 
         try:
-            tx = self.wallet.mktx([(TYPE_ADDRESS, self.str_recipient, amount)], password, self.config, fee)
+            tx = self.wallet.mktx(outputs=[PartialTxOutput.from_address_and_value(self.str_recipient, amount)],
+                                  password=password,
+                                  fee=fee)
         except Exception as e:
-            print(str(e))
+            print(repr(e))
             return
 
         if self.str_description:
-            self.wallet.labels[tx.txid()] = self.str_description
+            self.wallet.set_label(tx.txid(), self.str_description)
 
         print(_("Please wait..."))
-        status, msg = self.network.broadcast(tx)
-
-        if status:
+        try:
+            self.network.run_from_another_thread(self.network.broadcast_transaction(tx))
+        except TxBroadcastError as e:
+            msg = e.get_message_for_gui()
+            print(msg)
+        except BestEffortRequestFailed as e:
+            msg = repr(e)
+            print(msg)
+        else:
             print(_('Payment sent.'))
             #self.do_clear()
             #self.update_contacts_tab()
-        else:
-            print(_('Error'))
 
     def network_dialog(self):
         print("use 'electrum setconfig server/proxy' to change your network settings")

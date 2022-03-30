@@ -422,12 +422,13 @@ class ElectrumWindow:
             tx.set_rbf(True)
         print('amount: ' + str(amount) + '; fee: ' + str(fee) + '; use_rbf: ' + str(use_rbf))
 
-        if fee < self.wallet.relayfee() * tx.estimated_size() / 1000:
-            self.show_error('\n'.join([
-                _("This transaction requires a higher fee, or it will not be propagated by your current server"),
-                _("Try to raise your transaction fee, or use a server with a lower relay fee.")
-            ]))
-            return
+        
+#        if fee < self.wallet.relayfee() * tx.estimated_size() / 1000:
+#            self.show_error('\n'.join([
+#                _("This transaction requires a higher fee, or it will not be propagated by your current server"),
+#                _("Try to raise your transaction fee, or use a server with a lower relay fee.")
+#            ]))
+#            return
 
         if preview:
             print('preview')

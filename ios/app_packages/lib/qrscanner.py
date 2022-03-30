@@ -22,39 +22,55 @@
 # ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
+#
+# A QR scanner that uses zbar (via ctypes)
+# - to access the camera,
+# - and to find and decode QR codes (visible in the live feed).
 
 import os
 import sys
 import ctypes
+from typing import Optional, Mapping
+
+from .util import UserFacingException
+from .i18n import _
+from .logging import get_logger
+
+
+_logger = get_logger(__name__)
+
 
 if sys.platform == 'darwin':
-    name = 'libzbar.dylib'
+    name = 'libzbar.0.dylib'
 elif sys.platform in ('windows', 'win32'):
     name = 'libzbar-0.dll'
 else:
     name = 'libzbar.so.0'
 
 try:
-    libzbar = ctypes.cdll.LoadLibrary(name)
-except BaseException:
-    libzbar = None
+    libzbar = ctypes.cdll.LoadLibrary(os.path.join(os.path.dirname(__file__), name))
+except BaseException as e1:
+    try:
+        libzbar = ctypes.cdll.LoadLibrary(name)
+    except BaseException as e2:
+        libzbar = None
+        _logger.error(f"failed to load zbar. exceptions: {[e1,e2]!r}")
 
 
-def scan_barcode(device='', timeout=-1, display=True, threaded=False, try_again=True):
+def scan_barcode(device='', timeout=-1, display=True, threaded=False) -> Optional[str]:
     if libzbar is None:
-        raise RuntimeError("Cannot start QR scanner; zbar not available.")
+        raise UserFacingException("Cannot start QR scanner: zbar not available.")
     libzbar.zbar_symbol_get_data.restype = ctypes.c_char_p
     libzbar.zbar_processor_create.restype = ctypes.POINTER(ctypes.c_int)
     libzbar.zbar_processor_get_results.restype = ctypes.POINTER(ctypes.c_int)
     libzbar.zbar_symbol_set_first_symbol.restype = ctypes.POINTER(ctypes.c_int)
+    # libzbar.zbar_set_verbosity(100)  # verbose logs for debugging
     proc = libzbar.zbar_processor_create(threaded)
     libzbar.zbar_processor_request_size(proc, 640, 480)
     if libzbar.zbar_processor_init(proc, device.encode('utf-8'), display) != 0:
-        if try_again:
-            # workaround for a bug in "ZBar for Windows"
-            # libzbar.zbar_processor_init always seem to fail the first time around
-            return scan_barcode(device, timeout, display, threaded, try_again=False)
-        raise RuntimeError("Can not start QR scanner; initialization failed.")
+        raise UserFacingException(
+            _("Cannot start QR scanner: initialization failed.") + "\n" +
+            _("Make sure you have a camera connected and enabled."))
     libzbar.zbar_processor_set_visible(proc)
     if libzbar.zbar_process_one(proc, timeout):
         symbols = libzbar.zbar_processor_get_results(proc)
@@ -69,15 +85,17 @@ def scan_barcode(device='', timeout=-1, display=True, threaded=False, try_again=
     data = libzbar.zbar_symbol_get_data(symbol)
     return data.decode('utf8')
 
-def _find_system_cameras():
+
+def find_system_cameras() -> Mapping[str, str]:
     device_root = "/sys/class/video4linux"
     devices = {} # Name -> device
     if os.path.exists(device_root):
         for device in os.listdir(device_root):
+            path = os.path.join(device_root, device, 'name')
             try:
-                with open(os.path.join(device_root, device, 'name')) as f:
+                with open(path, encoding='utf-8') as f:
                     name = f.read()
-            except IOError:
+            except Exception:
                 continue
             name = name.strip('\n')
             devices[name] = os.path.join("/dev", device)

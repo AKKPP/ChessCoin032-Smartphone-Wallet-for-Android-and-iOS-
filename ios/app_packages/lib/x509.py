@@ -22,10 +22,18 @@
 # ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
+
+import hashlib
+import time
+from datetime import datetime
+
 from . import util
 from .util import profiler, bh2u
-import ecdsa
-import hashlib
+from .logging import get_logger
+
+
+_logger = get_logger(__name__)
+
 
 # algo OIDs
 ALGO_RSA_SHA1 = '1.2.840.113549.1.1.5'
@@ -178,6 +186,14 @@ class ASN1_Node(bytes):
                 p[oid] = value
         return p
 
+    def decode_time(self, ii):
+        GENERALIZED_TIMESTAMP_FMT = '%Y%m%d%H%M%SZ'
+        UTCTIME_TIMESTAMP_FMT = '%y%m%d%H%M%SZ'
+
+        try:
+            return time.strptime(self.get_value_of_type(ii, 'UTCTime').decode('ascii'), UTCTIME_TIMESTAMP_FMT)
+        except TypeError:
+            return time.strptime(self.get_value_of_type(ii, 'GeneralizedTime').decode('ascii'), GENERALIZED_TIMESTAMP_FMT)
 
 class X509(object):
     def __init__(self, b):
@@ -210,15 +226,9 @@ class X509(object):
         # validity
         validity = der.next_node(issuer)
         ii = der.first_child(validity)
-        try:
-            self.notBefore = der.get_value_of_type(ii, 'UTCTime')
-        except TypeError:
-            self.notBefore = der.get_value_of_type(ii, 'GeneralizedTime')[2:]  # strip year
+        self.notBefore = der.decode_time(ii)
         ii = der.next_node(ii)
-        try:
-            self.notAfter = der.get_value_of_type(ii, 'UTCTime')
-        except TypeError:
-            self.notAfter = der.get_value_of_type(ii, 'GeneralizedTime')[2:]  # strip year
+        self.notAfter = der.decode_time(ii)
 
         # subject
         subject = der.next_node(validity)
@@ -238,8 +248,8 @@ class X509(object):
             exponent = spk.next_node(modulus)
             rsa_n = spk.get_value_of_type(modulus, 'INTEGER')
             rsa_e = spk.get_value_of_type(exponent, 'INTEGER')
-            self.modulus = ecdsa.util.string_to_number(rsa_n)
-            self.exponent = ecdsa.util.string_to_number(rsa_e)
+            self.modulus = int.from_bytes(rsa_n, byteorder='big', signed=False)
+            self.exponent = int.from_bytes(rsa_e, byteorder='big', signed=False)
         else:
             subject_public_key = der.next_node(public_key_algo)
             spk = der.get_value_of_type(subject_public_key, 'BIT STRING')
@@ -293,15 +303,12 @@ class X509(object):
         return self.CA
 
     def check_date(self):
-        import time
-        now = time.time()
-        TIMESTAMP_FMT = '%y%m%d%H%M%SZ'
-        not_before = time.mktime(time.strptime(self.notBefore.decode('ascii'), TIMESTAMP_FMT))
-        not_after = time.mktime(time.strptime(self.notAfter.decode('ascii'), TIMESTAMP_FMT))
-        if not_before > now:
+        now = time.gmtime()
+        if self.notBefore > now:
             raise CertificateError('Certificate has not entered its valid date range. (%s)' % self.get_common_name())
-        if not_after <= now:
-            raise CertificateError('Certificate has expired. (%s)' % self.get_common_name())
+        if self.notAfter <= now:
+            dt = datetime.utcfromtimestamp(time.mktime(self.notAfter))
+            raise CertificateError(f'Certificate ({self.get_common_name()}) has expired (at {dt} UTC).')
 
     def getFingerprint(self):
         return hashlib.sha1(self.bytes).digest()
@@ -313,7 +320,7 @@ def load_certificates(ca_path):
     ca_list = {}
     ca_keyID = {}
     # ca_path = '/tmp/tmp.txt'
-    with open(ca_path, 'r') as f:
+    with open(ca_path, 'r', encoding='utf-8') as f:
         s = f.read()
     bList = pem.dePemList(s, "CERTIFICATE")
     for b in bList:
@@ -323,7 +330,7 @@ def load_certificates(ca_path):
         except BaseException as e:
             # with open('/tmp/tmp.txt', 'w') as f:
             #     f.write(pem.pem(b, 'CERTIFICATE').decode('ascii'))
-            util.print_error("cert error:", e)
+            _logger.info(f"cert error: {e}")
             continue
 
         fp = x.getFingerprint()
@@ -334,8 +341,7 @@ def load_certificates(ca_path):
 
 
 if __name__ == "__main__":
-    import requests
+    import certifi
 
-    util.set_verbosity(True)
-    ca_path = requests.certs.where()
+    ca_path = certifi.where()
     ca_list, ca_keyID = load_certificates(ca_path)

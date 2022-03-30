@@ -22,53 +22,66 @@
 # ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
-import gettext, os
+import os
+
+import gettext
 
 LOCALE_DIR = os.path.join(os.path.dirname(__file__), 'locale')
-language = gettext.translation('electrum', LOCALE_DIR, fallback = True)
+language = gettext.translation('electrum', LOCALE_DIR, fallback=True)
 
-def _(x):
+
+# note: f-strings cannot be translated! see https://stackoverflow.com/q/49797658
+#       So this does not work:   _(f"My name: {name}")
+#       instead use .format:     _("My name: {}").format(name)
+def _(x: str) -> str:
+    if x == "":
+        return ""  # empty string must not be translated. see #7158
     global language
-    return '|>' + x + '<|'
-
-def setPreferredLocale(locale):
-    code = languages.get(locale)
-    if len(code):
-        set_language(code)
+    return language.gettext(x)
 
 
 def set_language(x):
     global language
-    if x: language = gettext.translation('electrum', LOCALE_DIR, fallback = True, languages=[x])
+    if x:
+        language = gettext.translation('electrum', LOCALE_DIR, fallback=True, languages=[x])
+
 
 languages = {
-    'ar':_('ar_SA'),
-    'cs':_('cs_CZ'),
-    'da':_('da_DK'),
-    'de':_('de_DE'),
-    'eo':_('eo_UY'),
-    'el':_('el_GR'),
-    'en':_('en_UK'),
-    'es':_('es_ES'),
-    'fr':_('fr_FR'),
-    'hu':_('hu_HU'),
-    'hy':_('hy_AM'),
-    'id':_('id_ID'),
-    'it':_('it_IT'),
-    'ja':_('ja_JP'),
-    'ky':_('ky_KG'),
-    'lv':_('lv_LV'),
-    'nl':_('nl_NL'),
-    'no':_('no_NO'),
-    'pl':_('pl_PL'),
-    'br':_('pt_BR'),
-    'pt':_('pt_PT'),
-    'ro':_('ro_RO'),
-    'ru':_('ru_RU'),
-    'sk':_('sk_SK'),
-    'sl':_('sl_SI'),
-    'ta':_('ta_IN'),
-    'th':_('th_TH'),
-    'vi':_('vi_VN'),
-    'zh':_('zh_CN')
+    '': _('Default'),
+    'ar_SA': _('Arabic'),
+    'bg_BG': _('Bulgarian'),
+    'cs_CZ': _('Czech'),
+    'da_DK': _('Danish'),
+    'de_DE': _('German'),
+    'el_GR': _('Greek'),
+    'eo_UY': _('Esperanto'),
+    'en_UK': _('English'),
+    'es_ES': _('Spanish'),
+    'fa_IR': _('Persian'),
+    'fr_FR': _('French'),
+    'hu_HU': _('Hungarian'),
+    'hy_AM': _('Armenian'),
+    'id_ID': _('Indonesian'),
+    'it_IT': _('Italian'),
+    'ja_JP': _('Japanese'),
+    'ky_KG': _('Kyrgyz'),
+    'lv_LV': _('Latvian'),
+    'nb_NO': _('Norwegian Bokmal'),
+    'nl_NL': _('Dutch'),
+    'pl_PL': _('Polish'),
+    'pt_BR': _('Portuguese (Brazil)'),
+    'pt_PT': _('Portuguese'),
+    'ro_RO': _('Romanian'),
+    'ru_RU': _('Russian'),
+    'sk_SK': _('Slovak'),
+    'sl_SI': _('Slovenian'),
+    'sv_SE': _('Swedish'),
+    'ta_IN': _('Tamil'),
+    'th_TH': _('Thai'),
+    'tr_TR': _('Turkish'),
+    'uk_UA': _('Ukrainian'),
+    'vi_VN': _('Vietnamese'),
+    'zh_CN': _('Chinese Simplified'),
+    'zh_TW': _('Chinese Traditional')
 }
+assert '' in languages

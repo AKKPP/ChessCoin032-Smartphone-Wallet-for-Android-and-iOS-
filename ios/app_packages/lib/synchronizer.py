@@ -22,181 +22,293 @@
 # ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
-from threading import Lock
+import asyncio
 import hashlib
+from typing import Dict, List, TYPE_CHECKING, Tuple, Set
+from collections import defaultdict
+import logging
 
-# from .bitcoin import Hash, hash_encode
-from .transaction import Transaction
-from .util import ThreadJob, bh2u
+from aiorpcx import TaskGroup, run_in_thread, RPCError
+
+from . import util
+from .transaction import Transaction, PartialTransaction
+from .util import bh2u, make_aiohttp_session, NetworkJobOnDefaultServer, random_shuffled_copy
+from .bitcoin import address_to_scripthash, is_address
+from .logging import Logger
+from .interface import GracefulDisconnect, NetworkTimeout
+
+if TYPE_CHECKING:
+    from .network import Network
+    from .address_synchronizer import AddressSynchronizer
 
 
-class Synchronizer(ThreadJob):
+class SynchronizerFailure(Exception): pass
+
+
+def history_status(h):
+    if not h:
+        return None
+    status = ''
+    for tx_hash, height in h:
+        status += tx_hash + ':%d:' % height
+    return bh2u(hashlib.sha256(status.encode('ascii')).digest())
+
+
+class SynchronizerBase(NetworkJobOnDefaultServer):
+    """Subscribe over the network to a set of addresses, and monitor their statuses.
+    Every time a status changes, run a coroutine provided by the subclass.
+    """
+    def __init__(self, network: 'Network'):
+        self.asyncio_loop = network.asyncio_loop
+        self._reset_request_counters()
+
+        NetworkJobOnDefaultServer.__init__(self, network)
+
+    def _reset(self):
+        super()._reset()
+        self.requested_addrs = set()
+        self.scripthash_to_address = {}
+        self._processed_some_notifications = False  # so that we don't miss them
+        self._reset_request_counters()
+        # Queues
+        self.add_queue = asyncio.Queue()
+        self.status_queue = asyncio.Queue()
+
+    async def _run_tasks(self, *, taskgroup):
+        await super()._run_tasks(taskgroup=taskgroup)
+        try:
+            async with taskgroup as group:
+                await group.spawn(self.send_subscriptions())
+                await group.spawn(self.handle_status())
+                await group.spawn(self.main())
+        finally:
+            # we are being cancelled now
+            self.session.unsubscribe(self.status_queue)
+
+    def _reset_request_counters(self):
+        self._requests_sent = 0
+        self._requests_answered = 0
+
+    def add(self, addr):
+        asyncio.run_coroutine_threadsafe(self._add_address(addr), self.asyncio_loop)
+
+    async def _add_address(self, addr: str):
+        # note: this method is async as add_queue.put_nowait is not thread-safe.
+        if not is_address(addr): raise ValueError(f"invalid chesscoin address {addr}")
+        if addr in self.requested_addrs: return
+        self.requested_addrs.add(addr)
+        self.add_queue.put_nowait(addr)
+
+    async def _on_address_status(self, addr, status):
+        """Handle the change of the status of an address."""
+        raise NotImplementedError()  # implemented by subclasses
+
+    async def send_subscriptions(self):
+        async def subscribe_to_address(addr):
+            h = address_to_scripthash(addr)
+            self.scripthash_to_address[h] = addr
+            self._requests_sent += 1
+            try:
+                async with self._network_request_semaphore:
+                    await self.session.subscribe('blockchain.scripthash.subscribe', [h], self.status_queue)
+            except RPCError as e:
+                if e.message == 'history too large':  # no unique error code
+                    raise GracefulDisconnect(e, log_level=logging.ERROR) from e
+                raise
+            self._requests_answered += 1
+            self.requested_addrs.remove(addr)
+
+        while True:
+            addr = await self.add_queue.get()
+            await self.taskgroup.spawn(subscribe_to_address, addr)
+
+    async def handle_status(self):
+        while True:
+            h, status = await self.status_queue.get()
+            addr = self.scripthash_to_address[h]
+            await self.taskgroup.spawn(self._on_address_status, addr, status)
+            self._processed_some_notifications = True
+
+    def num_requests_sent_and_answered(self) -> Tuple[int, int]:
+        return self._requests_sent, self._requests_answered
+
+    async def main(self):
+        raise NotImplementedError()  # implemented by subclasses
+
+
+class Synchronizer(SynchronizerBase):
     '''The synchronizer keeps the wallet up-to-date with its set of
     addresses and their transactions.  It subscribes over the network
     to wallet addresses, gets the wallet to generate new addresses
     when necessary, requests the transaction history of any addresses
     we don't have the full history of, and requests binary transaction
     data of any transactions the wallet doesn't have.
-
-    External interface: __init__() and add() member functions.
     '''
-
-    def __init__(self, wallet, network):
+    def __init__(self, wallet: 'AddressSynchronizer'):
         self.wallet = wallet
-        self.network = network
-        self.new_addresses = set()
-        # Entries are (tx_hash, tx_height) tuples
-        self.requested_tx = {}
-        self.requested_histories = {}
-        self.requested_addrs = set()
-        self.lock = Lock()
-        self.initialize()
+        SynchronizerBase.__init__(self, wallet.network)
 
-    def parse_response(self, response):
-        if response.get('error'):
-            self.print_error("response error:", response)
-            return None, None
-        return response['params'], response['result']
+    def _reset(self):
+        super()._reset()
+        self.requested_tx = {}
+        self.requested_histories = set()
+        self._stale_histories = dict()  # type: Dict[str, asyncio.Task]
+
+    def diagnostic_name(self):
+        return self.wallet.diagnostic_name()
 
     def is_up_to_date(self):
-        return (not self.requested_tx and not self.requested_histories
-                and not self.requested_addrs)
+        return (not self.requested_addrs
+                and not self.requested_histories
+                and not self.requested_tx
+                and not self._stale_histories)
 
-    def release(self):
-        self.network.unsubscribe(self.on_address_status)
-
-    def add(self, address):
-        '''This can be called from the proxy or GUI threads.'''
-        with self.lock:
-            self.new_addresses.add(address)
-
-    def subscribe_to_addresses(self, addresses):
-        if addresses:
-            self.requested_addrs |= addresses
-            self.network.subscribe_to_addresses(addresses, self.on_address_status)
-
-    def get_status(self, h):
-        if not h:
-            return None
-        status = ''
-        for tx_hash, height in h:
-            status += tx_hash + ':%d:' % height
-        return bh2u(hashlib.sha256(status.encode('ascii')).digest())
-
-    def on_address_status(self, response):
-        if self.wallet.synchronizer is None:
-            return  # we have been killed, this was just an orphan callback
-        params, result = self.parse_response(response)
-        if not params:
+    async def _on_address_status(self, addr, status):
+        history = self.wallet.db.get_addr_history(addr)
+        if history_status(history) == status:
             return
-        addr = params[0]
-        history = self.wallet.history.get(addr, [])
-        if self.get_status(history) != result:
-            if self.requested_histories.get(addr) is None:
-                self.requested_histories[addr] = result
-                self.network.request_address_history(addr, self.on_address_history)
-        # remove addr from list only after it is added to requested_histories
-        if addr in self.requested_addrs:  # Notifications won't be in
-            self.requested_addrs.remove(addr)
-
-    def on_address_history(self, response):
-        if self.wallet.synchronizer is None:
-            return  # we have been killed, this was just an orphan callback
-        params, result = self.parse_response(response)
-        if not params:
+        # No point in requesting history twice for the same announced status.
+        # However if we got announced a new status, we should request history again:
+        if (addr, status) in self.requested_histories:
             return
-        addr = params[0]
-        self.print_error("receiving history", addr, len(result))
-        server_status = self.requested_histories[addr]
-        hashes = set(map(lambda item: item['tx_hash'], result))
+        # request address history
+        self.requested_histories.add((addr, status))
+        self._stale_histories.pop(addr, asyncio.Future()).cancel()
+        h = address_to_scripthash(addr)
+        self._requests_sent += 1
+        async with self._network_request_semaphore:
+            result = await self.interface.get_history_for_scripthash(h)
+        self._requests_answered += 1
+        self.logger.info(f"receiving history {addr} {len(result)}")
         hist = list(map(lambda item: (item['tx_hash'], item['height']), result))
         # tx_fees
         tx_fees = [(item['tx_hash'], item.get('fee')) for item in result]
         tx_fees = dict(filter(lambda x:x[1] is not None, tx_fees))
-        # Note if the server hasn't been patched to sort the items properly
-        if hist != sorted(hist, key=lambda x:x[1]):
-            self.network.interface.print_error("serving improperly sorted address histories")
-        # Check that txids are unique
-        if len(hashes) != len(result):
-            self.print_error("error: server history has non-unique txids: %s"% addr)
         # Check that the status corresponds to what was announced
-        elif self.get_status(hist) != server_status:
-            self.print_error("error: status mismatch: %s" % addr)
+        if history_status(hist) != status:
+            # could happen naturally if history changed between getting status and history (race)
+            self.logger.info(f"error: status mismatch: {addr}. we'll wait a bit for status update.")
+            # The server is supposed to send a new status notification, which will trigger a new
+            # get_history. We shall wait a bit for this to happen, otherwise we disconnect.
+            async def disconnect_if_still_stale():
+                timeout = self.network.get_network_timeout_seconds(NetworkTimeout.Generic)
+                await asyncio.sleep(timeout)
+                raise SynchronizerFailure(f"timeout reached waiting for addr {addr}: history still stale")
+            self._stale_histories[addr] = await self.taskgroup.spawn(disconnect_if_still_stale)
         else:
+            self._stale_histories.pop(addr, asyncio.Future()).cancel()
             # Store received history
             self.wallet.receive_history_callback(addr, hist, tx_fees)
             # Request transactions we don't have
-            self.request_missing_txs(hist)
+            await self._request_missing_txs(hist)
+
         # Remove request; this allows up_to_date to be True
-        self.requested_histories.pop(addr)
+        self.requested_histories.discard((addr, status))
 
-    def tx_response(self, response):
-        if self.wallet.synchronizer is None:
-            return  # we have been killed, this was just an orphan callback
-        params, result = self.parse_response(response)
-        if not params:
-            return
-        tx_hash = params[0]
-        #assert tx_hash == hash_encode(Hash(bytes.fromhex(result)))
-        tx = Transaction(result)
-        try:
-            tx.deserialize()
-        except Exception:
-            self.print_msg("cannot deserialize transaction, skipping", tx_hash)
-            return
-        tx_height = self.requested_tx.pop(tx_hash)
-        self.wallet.receive_tx_callback(tx_hash, tx, tx_height)
-        self.print_error("received tx %s height: %d bytes: %d" %
-                         (tx_hash, tx_height, len(tx.raw)))
-        # callbacks
-        self.network.trigger_callback('new_transaction', tx)
-        if not self.requested_tx:
-            self.network.trigger_callback('updated')
-
-
-    def request_missing_txs(self, hist):
+    async def _request_missing_txs(self, hist, *, allow_server_not_finding_tx=False):
         # "hist" is a list of [tx_hash, tx_height] lists
-        requests = []
+        transaction_hashes = []
         for tx_hash, tx_height in hist:
             if tx_hash in self.requested_tx:
                 continue
-            if tx_hash in self.wallet.transactions:
-                continue
-            requests.append(('blockchain.transaction.get', [tx_hash]))
+            tx = self.wallet.db.get_transaction(tx_hash)
+            if tx and not isinstance(tx, PartialTransaction):
+                continue  # already have complete tx
+            transaction_hashes.append(tx_hash)
             self.requested_tx[tx_hash] = tx_height
-        self.network.send(requests, self.tx_response)
+
+        if not transaction_hashes: return
+        async with TaskGroup() as group:
+            for tx_hash in transaction_hashes:
+                await group.spawn(self._get_transaction(tx_hash, allow_server_not_finding_tx=allow_server_not_finding_tx))
+
+    async def _get_transaction(self, tx_hash, *, allow_server_not_finding_tx=False):
+        self._requests_sent += 1
+        try:
+            async with self._network_request_semaphore:
+                raw_tx = await self.interface.get_transaction(tx_hash)
+        except RPCError as e:
+            # most likely, "No such mempool or blockchain transaction"
+            if allow_server_not_finding_tx:
+                self.requested_tx.pop(tx_hash)
+                return
+            else:
+                raise
+        finally:
+            self._requests_answered += 1
+        tx = Transaction(raw_tx)
+        if tx_hash != tx.txid():
+            raise SynchronizerFailure(f"received tx does not match expected txid ({tx_hash} != {tx.txid()})")
+        tx_height = self.requested_tx.pop(tx_hash)
+        self.wallet.receive_tx_callback(tx_hash, tx, tx_height)
+        self.logger.info(f"received tx {tx_hash} height: {tx_height} bytes: {len(raw_tx)}")
+        # callbacks
+        util.trigger_callback('new_transaction', self.wallet, tx)
+
+    async def main(self):
+        self.wallet.set_up_to_date(False)
+        # request missing txns, if any
+        for addr in random_shuffled_copy(self.wallet.db.get_history()):
+            history = self.wallet.db.get_addr_history(addr)
+            # Old electrum servers returned ['*'] when all history for the address
+            # was pruned. This no longer happens but may remain in old wallets.
+            if history == ['*']: continue
+            await self._request_missing_txs(history, allow_server_not_finding_tx=True)
+        # add addresses to bootstrap
+        for addr in random_shuffled_copy(self.wallet.get_addresses()):
+            await self._add_address(addr)
+        # main loop
+        while True:
+            await asyncio.sleep(0.1)
+            await run_in_thread(self.wallet.synchronize)
+            up_to_date = self.is_up_to_date()
+            if (up_to_date != self.wallet.is_up_to_date()
+                    or up_to_date and self._processed_some_notifications):
+                self._processed_some_notifications = False
+                if up_to_date:
+                    self._reset_request_counters()
+                self.wallet.set_up_to_date(up_to_date)
+                util.trigger_callback('wallet_updated', self.wallet)
 
 
-    def initialize(self):
-        '''Check the initial state of the wallet.  Subscribe to all its
-        addresses, and request any transactions in its address history
-        we don't have.
-        '''
-        for history in self.wallet.history.values():
-            # Old electrum servers returned ['*'] when all history for
-            # the address was pruned.  This no longer happens but may
-            # remain in old wallets.
-            if history == ['*']:
-                continue
-            self.request_missing_txs(history)
+class Notifier(SynchronizerBase):
+    """Watch addresses. Every time the status of an address changes,
+    an HTTP POST is sent to the corresponding URL.
+    """
+    def __init__(self, network):
+        SynchronizerBase.__init__(self, network)
+        self.watched_addresses = defaultdict(list)  # type: Dict[str, List[str]]
+        self._start_watching_queue = asyncio.Queue()  # type: asyncio.Queue[Tuple[str, str]]
 
-        if self.requested_tx:
-            self.print_error("missing tx", self.requested_tx)
-        self.subscribe_to_addresses(set(self.wallet.get_addresses()))
+    async def main(self):
+        # resend existing subscriptions if we were restarted
+        for addr in self.watched_addresses:
+            await self._add_address(addr)
+        # main loop
+        while True:
+            addr, url = await self._start_watching_queue.get()
+            self.watched_addresses[addr].append(url)
+            await self._add_address(addr)
 
-    def run(self):
-        '''Called from the network proxy thread main loop.'''
-        # 1. Create new addresses
-        self.wallet.synchronize()
+    async def start_watching_addr(self, addr: str, url: str):
+        await self._start_watching_queue.put((addr, url))
 
-        # 2. Subscribe to new addresses
-        with self.lock:
-            addresses = self.new_addresses
-            self.new_addresses = set()
-        self.subscribe_to_addresses(addresses)
+    async def stop_watching_addr(self, addr: str):
+        self.watched_addresses.pop(addr, None)
+        # TODO blockchain.scripthash.unsubscribe
 
-        # 3. Detect if situation has changed
-        up_to_date = self.is_up_to_date()
-        if up_to_date != self.wallet.is_up_to_date():
-            self.wallet.set_up_to_date(up_to_date)
-            self.network.trigger_callback('updated')
+    async def _on_address_status(self, addr, status):
+        if addr not in self.watched_addresses:
+            return
+        self.logger.info(f'new status for addr {addr}')
+        headers = {'content-type': 'application/json'}
+        data = {'address': addr, 'status': status}
+        for url in self.watched_addresses[addr]:
+            try:
+                async with make_aiohttp_session(proxy=self.network.proxy, headers=headers) as session:
+                    async with session.post(url, json=data, headers=headers) as resp:
+                        await resp.text()
+            except Exception as e:
+                self.logger.info(repr(e))
+            else:
+                self.logger.info(f'Got Response for {addr}')
